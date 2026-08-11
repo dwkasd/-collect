@@ -6,7 +6,6 @@ import scrapetube
 from youtube_transcript_api import YouTubeTranscriptApi
 import google.generativeai as genai
 
-# 1. 환경 변수에서 Gemini API Key 로드
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     print("[-] ERROR: GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -14,11 +13,10 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# 설정값
 PROCESSED_FILE = "processed_ids.json"
 EXCEL_FILE = "resume_youtube_knowledge.xlsx"
 JSONL_FILE = "resume_youtube_knowledge.jsonl"
-LIMIT_PER_KEYWORD = 3  # 키워드당 수집할 영상 개수
+LIMIT_PER_KEYWORD = 3
 
 def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
@@ -34,26 +32,19 @@ def save_processed_ids(processed_set):
         json.dump(list(processed_set), f, ensure_ascii=False, indent=2)
 
 def search_top_videos_by_keyword(keyword, processed_ids, limit=3):
-    """키워드로 유튜브 검색 후 영상 추출"""
     print(f"\n[+] 키워드 검색 시작: '{keyword}'")
     target_videos = []
     
     try:
-        # sort_by="views" 오류 수정 -> 관련도 높은 상위 검색결과 수집
         results = scrapetube.get_search(query=keyword, limit=limit * 3)
-        count = 0
         for video in results:
-            count += 1
             video_id = video.get('videoId')
-            if not video_id:
+            if not video_id or video_id in processed_ids:
                 continue
                 
             title_runs = video.get('title', {}).get('runs', [])
             title = title_runs[0].get('text', '') if title_runs else '제목 없음'
             
-            if video_id in processed_ids:
-                continue
-                
             target_videos.append({
                 "id": video_id,
                 "title": title,
@@ -64,20 +55,15 @@ def search_top_videos_by_keyword(keyword, processed_ids, limit=3):
             
             if len(target_videos) >= limit:
                 break
-                
-        if count == 0:
-            print(f"  └─ [-] 검색 결과가 없습니다.")
-            
     except Exception as e:
         print(f"[-] 검색 중 오류 발생 ('{keyword}'): {e}")
         
     return target_videos
 
 def get_youtube_transcript(video_id):
-    """수동 자막 + 자동 생성 자막 모두 호환 수집"""
+    """자막 수집 및 실패 에러 로깅"""
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        
         try:
             transcript = transcript_list.find_transcript(['ko', 'ko-KR'])
         except Exception:
@@ -85,9 +71,8 @@ def get_youtube_transcript(video_id):
             
         fetched = transcript.fetch()
         return " ".join([item['text'] for item in fetched])
-        
     except Exception as e:
-        print(f"  └─ [-] 자막 추출 불가 (자막 없음/비활성화): {e}")
+        print(f"  └─ [-] 자막 추출 실패: {e}")
         return None
 
 def analyze_with_gemini(transcript_text, video_url, video_title):
@@ -122,20 +107,18 @@ def analyze_with_gemini(transcript_text, video_url, video_title):
         result["video_url"] = video_url
         return result
     except Exception as e:
-        print(f"  └─ [-] Gemini API 가공 실패: {e}")
+        print(f"  └─ [-] Gemini 가공 실패: {e}")
         return None
 
 def append_to_database(new_data_list):
     if not new_data_list:
-        print("\n[-] 새로 가공된 데이터가 없어 파일 저장을 건너뜁니다.")
+        print("\n[-] 새로 가공된 데이터가 없습니다.")
         return
 
-    # JSONL 저장
     with open(JSONL_FILE, "a", encoding="utf-8") as f:
         for item in new_data_list:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
-    # 엑셀 저장
     new_df = pd.DataFrame(new_data_list)
     column_mapping = {
         "channel_name": "채널명", "video_title": "영상 제목", "section": "이력서 영역",
@@ -153,10 +136,6 @@ def append_to_database(new_data_list):
 
     with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
         combined_df.to_excel(writer, index=False, sheet_name='유튜브 지식베이스')
-        worksheet = writer.sheets['유튜브 지식베이스']
-        for col in worksheet.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
-            worksheet.column_dimensions[col[0].column_letter].width = min(max(max_len + 3, 12), 60)
 
     print(f"\n[+] 데이터베이스 저장 완료 (총 {len(combined_df)}건 누적됨)")
 
@@ -182,14 +161,13 @@ if __name__ == "__main__":
         print(f"\n[{idx}/{len(all_target_videos)}] 처리 중: {item['title']}")
         
         transcript = get_youtube_transcript(item['id'])
-        processed_ids.add(item['id'])
-        
         if not transcript:
             continue
             
         data = analyze_with_gemini(transcript, item['url'], item['title'])
         if data:
             new_results.append(data)
+            processed_ids.add(item['id'])  # ★ 분석 성공 시에만 ID 저장하도록 위치 이동
 
     append_to_database(new_results)
     save_processed_ids(processed_ids)
