@@ -1,10 +1,14 @@
 name: YouTube Resume Knowledge Pipeline
 
 on:
-  workflow_dispatch: # 웹상에서 버튼을 눌러 직접 실행 가능
+  workflow_dispatch:
   push:
     paths:
-      - 'keywords.txt' # keywords.txt 파일 수정 시 자동 실행
+      - 'keywords.txt'
+
+# ▼ 저장소 파일 수정(Commit & Push) 권한 부여
+permissions:
+  contents: write
 
 jobs:
   run-pipeline:
