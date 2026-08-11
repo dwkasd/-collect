@@ -1,33 +1,37 @@
-name: 2022년~현재 핵심뉴스 1000개 수집
+name: 유튜브 기사 및 콘텐츠 자동 수집
 
 on:
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch: # Actions 탭에서 수동 버튼으로 실행
+  schedule:
+    - cron: '0 */6 * * *' # 6시간마다 자동 실행 (필요 시 주석 처리 가능)
 
 jobs:
-  build:
+  collect-youtube:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 엑셀 파일 커밋 및 저장소 푸시 권한 부여
+
     steps:
-      - name: 코드 체크아웃
-        uses: actions/checkout@v3
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
 
       - name: 파이썬 환경 설정
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 필요 라이브러리 설치
+      - name: 필수 라이브러리 설치
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 pandas openpyxl lxml
+          pip install requests beautifulsoup4 pandas openpyxl lxml youtube-transcript-api google-api-python-client
 
-      - name: 1000개 기사 수집 파이썬 스크립트 실행
-        run: python collect_1000_historical.py
+      - name: 유튜브 수집 파이썬 스크립트 실행
+        run: python collect_youtube.py # 실행할 파이썬 파일명과 일치해야 합니다.
 
-      # ⭐ 이 아래 부분이 없으면 엑셀 파일이 가상머신 종료 시 사라집니다! ⭐
-      - name: 생성된 엑셀 파일 저장소에 커밋 및 푸시
+      - name: 수집 결과 엑셀 파일 커밋 및 저장소 푸시
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add accumulated_news.xlsx
-          git commit -m "Auto: 2022~현재 핵심뉴스 1000개 수집 완료" || echo "No changes to commit"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "Auto: 유튜브 수집 데이터 업데이트 완료 [skip ci]" || echo "No changes to commit"
           git push
