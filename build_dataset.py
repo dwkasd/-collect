@@ -18,7 +18,7 @@ genai.configure(api_key=GEMINI_API_KEY)
 PROCESSED_FILE = "processed_ids.json"
 EXCEL_FILE = "resume_youtube_knowledge.xlsx"
 JSONL_FILE = "resume_youtube_knowledge.jsonl"
-LIMIT_PER_KEYWORD = 3  # 키워드당 수집할 조회수 상위 영상 개수
+LIMIT_PER_KEYWORD = 3  # 키워드당 수집할 영상 개수
 
 def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
@@ -34,12 +34,13 @@ def save_processed_ids(processed_set):
         json.dump(list(processed_set), f, ensure_ascii=False, indent=2)
 
 def search_top_videos_by_keyword(keyword, processed_ids, limit=3):
-    """키워드로 유튜브 검색 후 조회수 높은 순서대로 영상 추출"""
+    """키워드로 유튜브 검색 후 영상 추출"""
     print(f"\n[+] 키워드 검색 시작: '{keyword}'")
     target_videos = []
     
     try:
-        results = scrapetube.get_search(query=keyword, sort_by="views", limit=limit * 3)
+        # sort_by="views" 오류 수정 -> 관련도 높은 상위 검색결과 수집
+        results = scrapetube.get_search(query=keyword, limit=limit * 3)
         count = 0
         for video in results:
             count += 1
@@ -65,7 +66,7 @@ def search_top_videos_by_keyword(keyword, processed_ids, limit=3):
                 break
                 
         if count == 0:
-            print(f"  └─ [-] 검색 결과가 없습니다 (유튜브 IP 차단 가능성).")
+            print(f"  └─ [-] 검색 결과가 없습니다.")
             
     except Exception as e:
         print(f"[-] 검색 중 오류 발생 ('{keyword}'): {e}")
@@ -77,11 +78,9 @@ def get_youtube_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         
-        # 1. 한국어 자막(수동/자동) 탐색
         try:
             transcript = transcript_list.find_transcript(['ko', 'ko-KR'])
         except Exception:
-            # 2. 한국어 자동 생성 자막 탐색
             transcript = transcript_list.find_generated_transcript(['ko', 'ko-KR'])
             
         fetched = transcript.fetch()
@@ -94,7 +93,7 @@ def get_youtube_transcript(video_id):
 def analyze_with_gemini(transcript_text, video_url, video_title):
     model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""
-    아래는 이력서/자소서 작성 관련 유튜브 영상의 자막입니다.
+    아래는 이력서/자소서 작성 및 직무 역량 관련 유튜브 영상의 자막입니다.
     이 내용을 정밀하게 분석하여 지식 데이터베이스용 JSON 규격으로 정제해 주세요.
 
     [영상 제목]: {video_title}
@@ -176,14 +175,14 @@ if __name__ == "__main__":
         videos = search_top_videos_by_keyword(kw, processed_ids, limit=LIMIT_PER_KEYWORD)
         all_target_videos.extend(videos)
 
-    print(f"\n[=] 총 {len(all_target_videos)}개의 인기 영상을 수집 대상으로 지정했습니다.")
+    print(f"\n[=] 총 {len(all_target_videos)}개의 유튜브 영상을 수집 대상으로 지정했습니다.")
 
     new_results = []
     for idx, item in enumerate(all_target_videos, 1):
         print(f"\n[{idx}/{len(all_target_videos)}] 처리 중: {item['title']}")
         
         transcript = get_youtube_transcript(item['id'])
-        processed_ids.add(item['id']) # 자막 여부와 상관없이 수집 시도 기록
+        processed_ids.add(item['id'])
         
         if not transcript:
             continue
