@@ -6,7 +6,6 @@ on:
     paths:
       - 'keywords.txt'
 
-# ▼ 저장소 파일 수정(Commit & Push) 권한 부여
 permissions:
   contents: write
 
@@ -37,6 +36,16 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add resume_youtube_knowledge.xlsx resume_youtube_knowledge.jsonl processed_ids.json
-          git diff --staged --quiet || git commit -m "auto: 유튜브 인기 영상 데이터 자동 누적"
-          git push
+          
+          # 파일이 실제로 존재할 때만 git add 수행 (에러 방지)
+          [ -f resume_youtube_knowledge.xlsx ] && git add resume_youtube_knowledge.xlsx
+          [ -f resume_youtube_knowledge.jsonl ] && git add resume_youtube_knowledge.jsonl
+          [ -f processed_ids.json ] && git add processed_ids.json
+          
+          # 스테이징된 변경사항이 있을 때만 커밋 및 푸시 진행
+          if ! git diff --staged --quiet; then
+            git commit -m "auto: 유튜브 인기 영상 데이터 자동 누적"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "[-] 저장할 새로운 변경 데이터가 없습니다."
+          fi
