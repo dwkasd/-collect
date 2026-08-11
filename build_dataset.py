@@ -18,29 +18,37 @@ genai.configure(api_key=GEMINI_API_KEY)
 PROCESSED_FILE = "processed_ids.json"
 EXCEL_FILE = "resume_youtube_knowledge.xlsx"
 JSONL_FILE = "resume_youtube_knowledge.jsonl"
-LIMIT_PER_KEYWORD = 5  # 키워드당 수집할 조회수 상위 영상 개수
+LIMIT_PER_KEYWORD = 3  # 키워드당 수집할 조회수 상위 영상 개수
 
 def load_processed_ids():
     if os.path.exists(PROCESSED_FILE):
-        with open(PROCESSED_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
+        try:
+            with open(PROCESSED_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
     return set()
 
 def save_processed_ids(processed_set):
     with open(PROCESSED_FILE, "w", encoding="utf-8") as f:
         json.dump(list(processed_set), f, ensure_ascii=False, indent=2)
 
-def search_top_videos_by_keyword(keyword, processed_ids, limit=5):
+def search_top_videos_by_keyword(keyword, processed_ids, limit=3):
     """키워드로 유튜브 검색 후 조회수 높은 순서대로 영상 추출"""
-    print(f"\n[+] 키워드 검색 시작: '{keyword}' (조회수 높은 순)")
+    print(f"\n[+] 키워드 검색 시작: '{keyword}'")
     target_videos = []
     
     try:
-        results = scrapetube.get_search(query=keyword, sort_by="views", limit=limit * 2)
-        
+        results = scrapetube.get_search(query=keyword, sort_by="views", limit=limit * 3)
+        count = 0
         for video in results:
-            video_id = video['videoId']
-            title = video.get('title', {}).get('runs', [{}])[0].get('text', '')
+            count += 1
+            video_id = video.get('videoId')
+            if not video_id:
+                continue
+                
+            title_runs = video.get('title', {}).get('runs', [])
+            title = title_runs[0].get('text', '') if title_runs else '제목 없음'
             
             if video_id in processed_ids:
                 continue
@@ -56,17 +64,31 @@ def search_top_videos_by_keyword(keyword, processed_ids, limit=5):
             if len(target_videos) >= limit:
                 break
                 
+        if count == 0:
+            print(f"  └─ [-] 검색 결과가 없습니다 (유튜브 IP 차단 가능성).")
+            
     except Exception as e:
         print(f"[-] 검색 중 오류 발생 ('{keyword}'): {e}")
         
     return target_videos
 
 def get_youtube_transcript(video_id):
+    """수동 자막 + 자동 생성 자막 모두 호환 수집"""
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ko'])
-        return " ".join([item['text'] for item in transcript])
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        
+        # 1. 한국어 자막(수동/자동) 탐색
+        try:
+            transcript = transcript_list.find_transcript(['ko', 'ko-KR'])
+        except Exception:
+            # 2. 한국어 자동 생성 자막 탐색
+            transcript = transcript_list.find_generated_transcript(['ko', 'ko-KR'])
+            
+        fetched = transcript.fetch()
+        return " ".join([item['text'] for item in fetched])
+        
     except Exception as e:
-        print(f"  └─ [-] 자막 수집 실패: {e}")
+        print(f"  └─ [-] 자막 추출 불가 (자막 없음/비활성화): {e}")
         return None
 
 def analyze_with_gemini(transcript_text, video_url, video_title):
@@ -106,6 +128,7 @@ def analyze_with_gemini(transcript_text, video_url, video_title):
 
 def append_to_database(new_data_list):
     if not new_data_list:
+        print("\n[-] 새로 가공된 데이터가 없어 파일 저장을 건너뜁니다.")
         return
 
     # JSONL 저장
@@ -160,14 +183,14 @@ if __name__ == "__main__":
         print(f"\n[{idx}/{len(all_target_videos)}] 처리 중: {item['title']}")
         
         transcript = get_youtube_transcript(item['id'])
+        processed_ids.add(item['id']) # 자막 여부와 상관없이 수집 시도 기록
+        
         if not transcript:
-            processed_ids.add(item['id'])
             continue
             
         data = analyze_with_gemini(transcript, item['url'], item['title'])
         if data:
             new_results.append(data)
-            processed_ids.add(item['id'])
 
     append_to_database(new_results)
     save_processed_ids(processed_ids)
